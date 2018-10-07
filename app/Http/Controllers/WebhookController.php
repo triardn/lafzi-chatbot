@@ -2,6 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\EventLog;
+use App\User;
+use GuzzleHttp\Client;
+use \LINE\LINEBot;
+use \LINE\LINEBot\HTTPClient\CurlHTTPClient;
+use \LINE\LINEBot\MessageBuilder\MultiMessageBuilder;
+use \LINE\LINEBot\MessageBuilder\TextMessageBuilder;
+use \LINE\LINEBot\MessageBuilder\StickerMessageBuilder;
+use App\QueryLog;
+
 class WebhookController extends Controller
 {
     /**
@@ -53,7 +63,7 @@ class WebhookController extends Controller
                 } else {
                     // respond event
                     if ($event['type'] == 'message') {
-                        // $this->play($event);
+                        $this->search($event);
                     } else {
                         $this->followCallback($event);
                     }
@@ -111,6 +121,56 @@ class WebhookController extends Controller
 
             // save user data
             $this->saveUserData($profile);
+        }
+    }
+
+    private function search($event)
+    {
+        if (!empty($event['message']['text'])) {
+            $userMessage = $event['message']['text'];
+
+            $log = new QueryLog;
+            $log->user_id = $this->user->user_id;
+            $log->query = $userMessage;
+            $log->save();
+
+            $url = '/verse/search/';
+            $client = new Client(['base_uri' => 'http://128.199.185.247/v1/', 'http_errors' => false]);
+
+            $send = $client->request('GET', 'verse/search?query='.$userMessage);
+
+            $response['status'] = $send->getStatusCode();
+            $response['verses'] = (array)json_decode($send->getBody());
+
+            if ($response['status'] == 200) {
+                $message = 'Hasil pencarian untuk kata "' . $userMessage . '" ditemukan pada ' . $response['verses']['data_count'] . ' ayat. Berikut 5 ayat pertama dari hasil pencarian:' . "\n";
+
+                $textMessageBuilder = new TextMessageBuilder($message);
+
+                $multiMessageBuilder = new MultiMessageBuilder();
+                $multiMessageBuilder->add($textMessageBuilder);
+
+                $data = $response['verses']['data'];
+
+                for ($i = 0; $i <= 5; $i++) {
+                    $msg = 'Surah ' . $data[$i]->surah_name . ' ayat ' . $data[$i]->verse_number . "\n";
+                    $msg .= $data[$i]->verse . "\n";
+                    $msg .= $data[$i]->translate . "\n";
+
+                    $msgBuilder = new TextMessageBuilder($msg);
+                    $multiMessageBuilder->add($msgBuilder);
+                }
+
+                $this->bot->replyMessage($event['replyToken'], $multiMessageBuilder);
+            } else {
+                $message = 'Maaf kak, pencairan gagal. Silakan coba dengan kata lain yaa';
+                $textMessageBuilder = new TextMessageBuilder($message);
+                $this->bot->replyMessage($event['replyToken'], $textMessageBuilder);
+            }
+        } else {
+            $message = 'Silakan ketik kata atau potongan ayat yang ingin dicari yaa kak';
+            $textMessageBuilder = new TextMessageBuilder($message);
+            $this->bot->replyMessage($event['replyToken'], $textMessageBuilder);
         }
     }
 }
